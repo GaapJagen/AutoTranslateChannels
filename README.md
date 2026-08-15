@@ -1,24 +1,27 @@
 # AutoTranslateChannels
 
-A Vencord userplugin that automatically translates messages in selected Discord channels.
+Automatically translate messages in selected Discord channels.
+
+AutoTranslateChannels is an unofficial Vencord userplugin that automatically translates messages in channels you choose, while giving you control over the target language, translation behavior, caching, concurrency and original-message display.
 
 ## Features
 
-- Automatic translation in selected channels
-- Replace the original message with the translation
+- Automatic translation in selected Discord channels
+- Replace the original message with its translation
 - Show the original message on demand
 - Translate only messages that are not already in the selected target language
+- 16 target languages
 - Minimum message length filter
 - Optional translation of bot messages
 - Optional translation of your own messages
-- Persistent translation cache with configurable size
-- Maximum concurrent translation requests
-- "Only new messages" mode
-- Multiple target languages
-- Context-menu controls for enabling/disabling translation for channels
+- Persistent translation cache
+- Configurable cache size
+- Configurable maximum number of simultaneous translation requests
+- "Only New Messages" mode
+- Channel context-menu controls
 - Partial embed translation support
 
-### Supported target languages
+## Supported languages
 
 - 🇷🇺 Русский
 - 🇬🇧 English
@@ -37,15 +40,39 @@ A Vencord userplugin that automatically translates messages in selected Discord 
 - 🇯🇵 日本語
 - 🇰🇷 한국어
 
+## Requirements
+
+### Vencord
+
+AutoTranslateChannels is a **Vencord UserPlugin**.
+
+You must have **Vencord built from source**. Vencord's official documentation states that custom plugins require a source build and are intended for advanced users.
+
+Official documentation:
+
+https://docs.vencord.dev/installing/custom-plugins/
+
+### Vencord Translate plugin
+
+**The Vencord `Translate` plugin must also be enabled.**
+
+AutoTranslateChannels uses Vencord's existing Translate plugin and its translation infrastructure rather than providing a separate translation backend.
+
+Enable it in:
+
+**Discord → User Settings → Vencord → Plugins → Translate**
+
+AutoTranslateChannels should be used together with the Vencord `Translate` plugin.
+
 ## Installation
 
-This is a **Vencord userplugin**, not an official Vencord plugin.
-
-Vencord's documentation recommends putting custom plugins in `src/userplugins`. You need a Vencord build from source.
+This is an unofficial Vencord UserPlugin.
 
 ### Windows / macOS / Linux
 
-From your Vencord directory:
+First make sure you have a Vencord source checkout and that you can build Vencord successfully.
+
+Open a terminal in your Vencord directory and run:
 
 ```bash
 cd src/userplugins
@@ -54,9 +81,20 @@ cd ../..
 pnpm build
 ```
 
-Then restart Discord.
+Restart Discord after the build finishes.
 
-If you already have the repository cloned, update it with:
+Then enable both:
+
+1. **Translate**
+2. **AutoTranslateChannels**
+
+in:
+
+**Discord → User Settings → Vencord → Plugins**
+
+### Updating
+
+If you already installed the plugin using Git:
 
 ```bash
 cd src/userplugins/AutoTranslateChannels
@@ -65,86 +103,223 @@ cd ../../..
 pnpm build
 ```
 
-> This repository is hosted by **GaapJagen**.
+Restart Discord after the build completes.
 
 ### Manual installation
 
-You can also download `index.tsx` and place it directly in:
+You can also download `index.tsx` from this repository and place it directly in:
 
 ```text
 Vencord/src/userplugins/AutoTranslateChannels.tsx
 ```
 
-Then run:
+Then rebuild Vencord:
 
 ```bash
 pnpm build
 ```
 
-The repository layout is intentionally compatible with Vencord's documented custom-plugin structure: a plugin can be a single `.ts/.tsx` file or a folder with an `index.ts/.tsx` entry point.
+Vencord supports custom plugins either as a single `.ts/.tsx` file or as a directory containing an `index.ts`/`index.tsx` file.
 
 ## Configuration
 
-After building Vencord, enable **AutoTranslateChannels** in:
+After building Vencord, enable **Translate** and **AutoTranslateChannels**.
 
-**Discord → User Settings → Vencord → Plugins**
+AutoTranslateChannels provides the following settings:
 
-Then configure:
+### Target Language
 
-- **Target Language** — language to translate into
-- **Replace Original** — replace the original message with the translation
-- **Show Label** — show the translation label when the original is not replaced
-- **Translate Only Foreign Text** — skip messages already detected as the target language
-- **Only New Messages** — translate only messages arriving after the plugin is enabled
-- **Max Concurrent** — maximum number of translation requests running at once
-- **Persistent Cache** — keep translations between client restarts
-- **Cache Limit** — maximum number of cached translations
-- **Minimum Length** — ignore very short messages
-- **Translate Bots** — include bot messages
-- **Translate Own Messages** — include your own messages
-- **Ignore Non Text** — skip messages without useful text
+The language all translated messages should be translated into.
 
-Channels can be managed separately through the channel context menu.
+### Replace Original
 
-## Current limitations
+Replace the original message with the translated text.
 
-- Reply-preview translation is intentionally **not included** in the current release.
-- Embed translation is supported, but Discord embed rendering can vary between messages and Discord client versions.
-- Language detection for "Translate Only Foreign Text" is heuristic. Very short or ambiguous text such as `ok`, `lol`, `gg`, or names may not be classified reliably.
-- The plugin depends on Vencord and Discord internals. Discord updates can break custom plugins.
+When enabled, the original text can be shown using the original-message control.
+
+### Show Label
+
+Controls whether a translation label is displayed when the original message is not replaced.
+
+### Translate Only Foreign Text
+
+Skip messages that already appear to be written in the selected target language.
+
+Language detection is heuristic, especially for very short messages.
+
+### Only New Messages
+
+Only automatically translate messages that arrive after the plugin is enabled.
+
+### Max Concurrent
+
+Controls how many translation requests can run simultaneously.
+
+This helps balance translation speed against excessive requests and possible rate limits.
+
+### Persistent Cache
+
+Keep translations in the cache between Discord restarts.
+
+### Cache Limit
+
+Controls the maximum number of cached translations.
+
+### Minimum Length
+
+Ignore messages shorter than the configured number of characters.
+
+This can help avoid unnecessary translations of short messages such as:
+
+```text
+ok
+lol
+gg
+ty
+```
+
+### Translate Bots
+
+Allow messages sent by bots to be translated.
+
+### Translate Own Messages
+
+Allow your own messages to be translated.
+
+### Ignore Non Text
+
+Skip messages that do not contain useful text.
+
+## Channel management
+
+AutoTranslateChannels has separate channel management controls.
+
+Use the channel context menu to enable or disable automatic translation for individual channels.
+
+Channel management is independent from the translation settings themselves.
+
+## How translation works
+
+AutoTranslateChannels uses Vencord's existing Translate infrastructure.
+
+The plugin manages:
+
+- which channels should be translated;
+- when messages should be translated;
+- which messages should be skipped;
+- translation concurrency;
+- translation caching;
+- target language selection;
+- replacement of the original message.
+
+The actual translation backend is provided by Vencord's Translate system.
 
 ## Privacy
 
-The plugin does not provide its own translation backend. It uses Vencord's existing translation utilities and follows the configuration of that translation system.
+AutoTranslateChannels does not provide its own translation service.
 
-Before using it with sensitive conversations, understand which translation provider your Vencord setup uses and what data that provider receives.
+It uses Vencord's existing translation infrastructure and therefore follows the translation provider configured by your Vencord Translate setup.
+
+If you use the plugin with private or sensitive conversations, make sure you understand which translation provider is being used and what information that provider receives.
+
+## Current limitations
+
+- Reply-preview translation is currently **not supported**.
+- Embed translation is supported, but Discord's embed structure and rendering can vary between messages and Discord client versions.
+- "Translate Only Foreign Text" uses heuristic language detection. Very short, ambiguous text, names, abbreviations and slang may not always be detected correctly.
+- The plugin relies on Vencord and Discord internals. Discord or Vencord updates may break functionality and require an update.
+- Custom Vencord plugins require a Vencord source build.
+
+## Troubleshooting
+
+### The plugin does not appear in Vencord
+
+Make sure:
+
+1. The file is inside:
+
+```text
+Vencord/src/userplugins/
+```
+
+2. The file is named:
+
+```text
+AutoTranslateChannels.tsx
+```
+
+or the repository is installed as:
+
+```text
+Vencord/src/userplugins/AutoTranslateChannels/index.tsx
+```
+
+3. Vencord was rebuilt:
+
+```bash
+pnpm build
+```
+
+4. Discord was restarted.
+
+### Messages are not translated
+
+Check that:
+
+1. **Translate** is enabled.
+2. **AutoTranslateChannels** is enabled.
+3. The current channel is included in the translation channel list.
+4. The selected target language is correct.
+5. The message is long enough according to **Minimum Length**.
+6. **Translate Only Foreign Text** is not incorrectly skipping the message.
+7. Your translation provider/configuration in Vencord Translate is working.
+
+### Translations are slow
+
+Check:
+
+- **Max Concurrent**
+- persistent cache
+- whether the translation provider is responding normally
+
+Increasing concurrency can improve throughput, but excessive concurrency may increase the chance of rate limits.
 
 ## Contributing
 
 Issues and pull requests are welcome.
 
-When reporting a bug, include:
+When reporting a bug, please include:
 
-1. Vencord version / commit
+1. Vencord version or commit
 2. Discord client version
 3. AutoTranslateChannels version or commit
 4. Target language
 5. Relevant plugin settings
 6. A short reproduction example
-7. Console/build errors, if any
+7. Build or console errors, if any
 
-Please avoid posting private conversations or personal information.
+Please remove private conversations, usernames, IDs, tokens and other sensitive information before posting screenshots or logs.
 
 ## Disclaimer
 
-AutoTranslateChannels is an unofficial Vencord userplugin and is not affiliated with, endorsed by, or sponsored by Discord Inc. or the Vencord project.
+AutoTranslateChannels is an unofficial Vencord UserPlugin.
 
-Vencord's official documentation states that custom-plugin installations are advanced/unsupported and that users are responsible for issues arising from them. Use this plugin at your own risk.
+It is not affiliated with, endorsed by, or sponsored by Discord Inc. or the Vencord project.
+
+Custom Vencord plugins are intended for advanced users and may cause problems after Vencord or Discord updates. Use this plugin at your own risk.
 
 ## License
 
-GPL-3.0-or-later. See [LICENSE](LICENSE).
+GPL-3.0-or-later.
+
+See [LICENSE](LICENSE).
 
 ## Credits
 
-Built as a community Vencord userplugin using Vencord's plugin and translation APIs.
+Created as a community Vencord UserPlugin using Vencord's plugin and translation APIs.
+
+## Links
+
+- Repository: https://github.com/GaapJagen/AutoTranslateChannels
+- Releases: https://github.com/GaapJagen/AutoTranslateChannels/releases
+- Vencord custom plugin documentation: https://docs.vencord.dev/installing/custom-plugins/
