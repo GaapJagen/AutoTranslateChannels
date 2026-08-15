@@ -49,7 +49,7 @@ From your Vencord directory:
 
 ```bash
 cd src/userplugins
-git clone https://github.com/YOUR_USERNAME/AutoTranslateChannels.git
+git clone https://github.com/GaapJagen/AutoTranslateChannels.git
 cd ../..
 pnpm build
 ```
@@ -65,7 +65,7 @@ cd ../../..
 pnpm build
 ```
 
-> Replace `YOUR_USERNAME` with the GitHub account that hosts this repository.
+> This repository is hosted by **GaapJagen**.
 
 ### Manual installation
 
