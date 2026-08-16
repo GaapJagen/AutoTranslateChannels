@@ -456,9 +456,7 @@ async function doTranslation(
 
     try {
         translateSettings.store.receivedOutput = settings.store.targetLanguage;
-        console.log("[AutoTranslateChannels] Translating:", content);
         const result = await translate("received", content);
-        console.log("[AutoTranslateChannels] Translation result:", result);
         putCache(key, result, content);
         return result;
     } finally {
@@ -532,12 +530,6 @@ function handleMessageUpdate({ message }: { message?: Message }) {
     // The cache key contains the message content, but removing old versions
     // keeps the persistent cache from retaining stale edits indefinitely.
     invalidateMessageTranslations(message.id);
-    for (const key of embedCache.keys()) {
-        if (key.startsWith(`embed-result:${message.id}:`) || key.startsWith(`embed-result-v2:${message.id}:`)) embedCache.delete(key);
-    }
-    for (const key of embedPending.keys()) {
-        if (key.startsWith(`embed-result:${message.id}:`) || key.startsWith(`embed-result-v2:${message.id}:`)) embedPending.delete(key);
-    }
     originalVisibility.delete(message.id);
 }
 
@@ -546,21 +538,12 @@ function handleMessageDelete({ id, channelId }: { id?: string; channelId?: strin
 
     bumpMessageRevision(id);
     invalidateMessageTranslations(id);
-    for (const key of embedCache.keys()) {
-        if (key.startsWith(`embed-result:${id}:`) || key.startsWith(`embed-result-v2:${id}:`)) embedCache.delete(key);
-    }
-    for (const key of embedPending.keys()) {
-        if (key.startsWith(`embed-result:${id}:`) || key.startsWith(`embed-result-v2:${id}:`)) embedPending.delete(key);
-    }
     originalVisibility.delete(id);
     messageRevisions.delete(id);
 
     if (channelId) {
         for (const key of pending.keys()) {
-            if (
-                key.startsWith(`${id}:`) ||
-                key.startsWith(`embed:${id}:`)
-            ) {
+            if (key.startsWith(`${id}:`)) {
                 pending.delete(key);
             }
         }
@@ -573,422 +556,76 @@ function handleMessageDeleteBulk({ ids }: { ids?: string[] }) {
 
 
 const originalVisibility = new Map<string, boolean>();
-const messageListeners = new Map<string, Set<() => void>>();
+const replaceOriginalListeners = new Set<() => void>();
+let replaceOriginalPatchActive = false;
 
-function subscribeMessage(messageId: string, listener: () => void) {
-    const listeners = messageListeners.get(messageId) ?? new Set<() => void>();
-    listeners.add(listener);
-    messageListeners.set(messageId, listeners);
-
-    return () => {
-        listeners.delete(listener);
-        if (!listeners.size) messageListeners.delete(messageId);
-    };
+function emitReplaceOriginalChange() {
+    replaceOriginalListeners.forEach(listener => listener());
 }
 
-function notifyMessage(messageId: string) {
-    messageListeners.get(messageId)?.forEach(listener => listener());
+function addReplaceOriginalListener(listener: () => void) {
+    replaceOriginalListeners.add(listener);
+    return () => replaceOriginalListeners.delete(listener);
 }
-const messageRevisions = new Map<string, number>();
 
-type EmbedTranslation = {
-    index: number;
-    title?: string;
-    description?: string;
-    author?: string;
-    footer?: string;
-    fields: Array<{ name: string; value: string }>;
-};
-
-const embedCache = new Map<string, EmbedTranslation[]>();
-const embedPending = new Map<string, Promise<EmbedTranslation[]>>();
-
-function bumpMessageRevision(messageId: string): number {
-    const revision = (messageRevisions.get(messageId) ?? 0) + 1;
-    messageRevisions.set(messageId, revision);
-    return revision;
+function markReplaceOriginalPatchActive() {
+    if (!replaceOriginalPatchActive) {
+        replaceOriginalPatchActive = true;
+        emitReplaceOriginalChange();
+    }
 }
 
 function toggleOriginal(message: Message) {
     const messageId = message.id;
-    const visible = !(originalVisibility.get(messageId) ?? false);
-    originalVisibility.set(messageId, visible);
-    notifyMessage(messageId);
+    originalVisibility.set(messageId, !(originalVisibility.get(messageId) ?? false));
+    emitReplaceOriginalChange();
 }
 
-function getEmbedParts(message: Message) {
-    return (message.embeds ?? []).map((embed, index) => ({
-        index,
-        title: embed.title?.trim() || "",
-        description: embed.description?.trim() || "",
-        author: embed.author?.name?.trim() || "",
-        footer: embed.footer?.text?.trim() || "",
-        fields: (embed.fields ?? [])
-            .map(field => ({
-                name: field.name?.trim() || "",
-                value: field.value?.trim() || "",
-            }))
-            .filter(field => field.name || field.value),
-    })).filter(embed =>
-        embed.title ||
-        embed.description ||
-        embed.author ||
-        embed.footer ||
-        embed.fields.length,
-    );
-}
-
-function shouldTranslateEmbedText(text: string) {
-    if (!text || !isUsefulText(text)) return false;
-
-    if (
-        settings.store.translateOnlyForeignText &&
-        looksLikeTargetLanguage(text, settings.store.targetLanguage)
-    ) return false;
-
-    return true;
-}
-
-
-function getEmbedTextEntries(embed: ReturnType<typeof getEmbedParts>[number]) {
-    const entries: Array<{ key: string; text: string }> = [];
-
-    if (embed.author) entries.push({ key: "author", text: embed.author });
-    if (embed.title) entries.push({ key: "title", text: embed.title });
-    if (embed.description) entries.push({ key: "description", text: embed.description });
-
-    embed.fields.forEach((field, fieldIndex) => {
-        if (field.name) {
-            entries.push({
-                key: `field:${fieldIndex}:name`,
-                text: field.name,
-            });
-        }
-
-        if (field.value) {
-            entries.push({
-                key: `field:${fieldIndex}:value`,
-                text: field.value,
-            });
-        }
-    });
-
-    if (embed.footer) entries.push({ key: "footer", text: embed.footer });
-
-    return entries;
-}
-
-function shouldTranslateEmbedEntry(text: string) {
-    return shouldTranslateEmbedText(text);
-}
-
-function buildEmbedTranslationPrompt(
-    embed: ReturnType<typeof getEmbedParts>[number],
-) {
-    return getEmbedTextEntries(embed)
-        .map((entry, index) => {
-            const number = index + 1;
-
-            if (!shouldTranslateEmbedEntry(entry.text)) {
-                return `[${number}]`;
-            }
-
-            // One entry per line, with a very simple numeric marker that
-            // translation providers normally preserve verbatim.
-            return `[${number}] ${entry.text}`;
-        })
-        .join("\n");
-}
-
-function parseNumberedEmbedTranslation(
-    embed: ReturnType<typeof getEmbedParts>[number],
-    translated: string,
-): EmbedTranslation {
-    const entries = getEmbedTextEntries(embed);
-    const translatedByKey = new Map<string, string>();
-
-    // Accept both "[1] text" and "[1]text", and tolerate minor whitespace
-    // changes introduced by the translation provider.
-    const lines = translated
-        .replace(/\r/g, "")
-        .split("\n")
-        .map(line => line.trim())
-        .filter(Boolean);
-
-    const parsed = new Map<number, string>();
-
-    for (const line of lines) {
-        const match = line.match(/^\[(\d+)\]\s*(.*)$/s);
-        if (!match) continue;
-
-        const number = Number(match[1]);
-        if (!Number.isInteger(number) || number < 1 || number > entries.length) {
-            continue;
-        }
-
-        const value = match[2].trim();
-
-        // If the provider duplicated a marker, keep the first non-empty value.
-        if (!parsed.has(number) && value) {
-            parsed.set(number, value);
-        }
-    }
-
-    entries.forEach((entry, index) => {
-        const translatedValue = parsed.get(index + 1);
-
-        // If a marker was lost or the provider returned an empty value,
-        // preserve the original rather than displaying broken output.
-        translatedByKey.set(
-            entry.key,
-            translatedValue || entry.text,
-        );
-    });
-
-    return {
-        index: embed.index,
-        author: translatedByKey.get("author") ?? embed.author,
-        title: translatedByKey.get("title") ?? embed.title,
-        description: translatedByKey.get("description") ?? embed.description,
-        footer: translatedByKey.get("footer") ?? embed.footer,
-        fields: embed.fields.map((field, fieldIndex) => ({
-            name: translatedByKey.get(`field:${fieldIndex}:name`) ?? field.name,
-            value: translatedByKey.get(`field:${fieldIndex}:value`) ?? field.value,
-        })),
-    };
-}
-
-async function translateEmbed(
-    message: Message,
-    embed: ReturnType<typeof getEmbedParts>[number],
-) {
-    const entries = getEmbedTextEntries(embed);
-    const translatable = entries.some(entry =>
-        shouldTranslateEmbedEntry(entry.text),
-    );
-
-    if (!translatable) {
-        return {
-            index: embed.index,
-            author: embed.author,
-            title: embed.title,
-            description: embed.description,
-            footer: embed.footer,
-            fields: embed.fields.map(field => ({ ...field })),
-        } satisfies EmbedTranslation;
-    }
-
-    const prompt = buildEmbedTranslationPrompt(embed);
-
-    const key = [
-        "embed-batch-v2",
-        message.id,
-        message.channel_id,
-        settings.store.targetLanguage,
-        embed.index,
-        prompt,
-    ].join(":");
-
-    const result = await getTranslationWithKey(message, prompt, key);
-
-    return parseNumberedEmbedTranslation(embed, result.text);
-}
-
-async function translateEmbeds(message: Message): Promise<EmbedTranslation[]> {
-    const parts = getEmbedParts(message);
-    if (!parts.length) return [];
-
-    const resultCacheKey = [
-        "embed-result-v2",
-        message.id,
-        message.channel_id,
-        settings.store.targetLanguage,
-        JSON.stringify(parts),
-    ].join(":");
-
-    const cached = embedCache.get(resultCacheKey);
-    if (cached) return cached;
-
-    const existing = embedPending.get(resultCacheKey);
-    if (existing) return existing;
-
-    const promise = (async () => {
-        const results: EmbedTranslation[] = [];
-
-        // Exactly one queued translation request per embed.
-        // The global queue still enforces Max Concurrent.
-        for (const embed of parts) {
-            results.push(await translateEmbed(message, embed));
-        }
-
-        embedCache.set(resultCacheKey, results);
-        return results;
-    })().finally(() => {
-        embedPending.delete(resultCacheKey);
-    });
-
-    embedPending.set(resultCacheKey, promise);
-    return promise;
-}
-
-
-function EmbedTranslationAccessory({ message }: { message: Message }) {
-    const [result, setResult] = React.useState<EmbedTranslation[] | null>(null);
-
-    React.useEffect(() => {
-        let cancelled = false;
-        const revision = messageRevisions.get(message.id) ?? 0;
-
-        if (!message.embeds?.length || !isEnabled(message.channel_id)) {
-            setResult(null);
-            return;
-        }
-
-        translateEmbeds(message)
-            .then(value => {
-                if (cancelled) return;
-
-                const currentRevision = messageRevisions.get(message.id) ?? 0;
-                const currentMessage = MessageStore.getMessage(
-                    message.channel_id,
-                    message.id,
-                );
-
-                if (
-                    currentRevision !== revision ||
-                    JSON.stringify(currentMessage?.embeds ?? []) !==
-                        JSON.stringify(message.embeds ?? [])
-                ) {
-                    return;
-                }
-
-                setResult(value);
-                notifyMessage(message.id);
-            })
-            .catch(() => {
-                if (!cancelled) setResult(null);
-            });
-
-        return () => {
-            cancelled = true;
-        };
-    }, [
-        message.id,
-        message.channel_id,
-        JSON.stringify(message.embeds),
-        settings.store.targetLanguage,
-        settings.store.minLength,
-        settings.store.translateOnlyForeignText,
-        settings.store.ignoreNonText,
-    ]);
-
-    if (!result?.length) return null;
-
-    return (
-        <div
-            style={{
-                marginTop: 6,
-                paddingTop: 6,
-                borderTop: "1px solid var(--background-modifier-accent)",
-                color: "var(--text-normal)",
-                opacity: 0.92,
-            }}
-        >
-            <div
-                style={{
-                    color: "var(--text-muted)",
-                    fontSize: 11,
-                    marginBottom: 4,
-                }}
-            >
-                Перевод embed
-            </div>
-
-            {result.map(embed => (
-                <div key={embed.index} style={{ marginBottom: 8 }}>
-                    {embed.author && (
-                        <div style={{ fontWeight: 600 }}>
-                            {Parser.parse(embed.author)}
-                        </div>
-                    )}
-
-                    {embed.title && (
-                        <div style={{ fontWeight: 600 }}>
-                            {Parser.parse(embed.title)}
-                        </div>
-                    )}
-
-                    {embed.description && (
-                        <div>{Parser.parse(embed.description)}</div>
-                    )}
-
-                    {embed.fields.map((field, index) => (
-                        <div key={index} style={{ marginTop: 4 }}>
-                            {field.name && (
-                                <div style={{ fontWeight: 600 }}>
-                                    {Parser.parse(field.name)}
-                                </div>
-                            )}
-                            {field.value && (
-                                <div>{Parser.parse(field.value)}</div>
-                            )}
-                        </div>
-                    ))}
-
-                    {embed.footer && (
-                        <div
-                            style={{
-                                color: "var(--text-muted)",
-                                fontSize: 11,
-                                marginTop: 4,
-                            }}
-                        >
-                            {Parser.parse(embed.footer)}
-                        </div>
-                    )}
-                </div>
-            ))}
-        </div>
-    );
-}
-
-function AutoTranslatedContent({
+function ReplaceOriginalContent({
     message,
-    originalContent,
+    original,
 }: {
     message: Message;
-    originalContent: React.ReactNode;
+    original: React.ReactNode;
 }) {
+    const pluginSettings = settings.use(["replaceOriginal"]);
     const [, forceUpdate] = React.useReducer(x => x + 1, 0);
-    const { replaceOriginal } = settings.use(["replaceOriginal"]);
 
-    React.useEffect(() => {
-        const unsubscribeMessage = subscribeMessage(message.id, forceUpdate);
-        const unsubscribeChannels = addListener(forceUpdate);
+    React.useEffect(() => addReplaceOriginalListener(forceUpdate), []);
 
-        return () => {
-            unsubscribeMessage();
-            unsubscribeChannels();
-        };
-    }, [message.id]);
-
-    if (!replaceOriginal || !isEnabled(message.channel_id)) {
-        return <>{originalContent}</>;
+    if (!pluginSettings.replaceOriginal || !isEnabled(message.channel_id)) {
+        return <>{original}</>;
     }
 
     if (originalVisibility.get(message.id)) {
-        return <>{originalContent}</>;
+        return <>{original}</>;
     }
 
     const content = getContent(message);
     const result = getCachedForMessage(message, content);
 
     if (!result?.text || result.text.trim() === content) {
-        return <>{originalContent}</>;
+        return <>{original}</>;
     }
 
-    return <>{Parser.parse(result.text)}</>;
+    return (
+        <div
+            style={{
+                color: "var(--text-normal)",
+                fontFamily: "var(--font-primary)",
+                fontSize: 16,
+                lineHeight: "1.375",
+                fontWeight: 400,
+                whiteSpace: "pre-wrap",
+                overflowWrap: "break-word",
+            }}
+        >
+            {Parser.parse(result.text)}
+        </div>
+    );
 }
+
+const messageRevisions = new Map<string, number>();
 
 function TranslationAccessory({ message }: { message: Message }) {
     const pluginSettings = settings.use([
@@ -1002,6 +639,7 @@ function TranslationAccessory({ message }: { message: Message }) {
     const [result, setResult] = React.useState<TranslationValue | null>(
         getCachedForMessage(message, content),
     );
+
 
     React.useEffect(() => {
         let cancelled = false;
@@ -1062,13 +700,10 @@ function TranslationAccessory({ message }: { message: Message }) {
     if (!result?.text) return null;
 
     const original = content;
+    if (pluginSettings.replaceOriginal && replaceOriginalPatchActive) {
+        return null;
+    }
     if (result.text.trim() === original) return null;
-
-    // When Replace Original is enabled, the Discord message renderer is
-    // patched to render the translation in place of the original content.
-    // Do not render the accessory as well, otherwise the translation would
-    // appear twice.
-    if (pluginSettings.replaceOriginal) return null;
 
     return (
         <div
@@ -1209,21 +844,29 @@ export default definePlugin({
 
     dependencies: ["Translate"],
 
-    patches: [{
-        find: "hasBailedAst",
-        replacement: {
-            match: /childrenMessageContent:(\i),/,
-            replace: "childrenMessageContent:$self.renderMessageContent(e,$1),",
-        },
-    }],
-
-    renderMessageContent(props: { message: Message }, originalContent: React.ReactNode) {
-        return <AutoTranslatedContent message={props.message} originalContent={originalContent} />;
-    },
-
     settings,
 
     settingsAboutComponent: () => <ChannelManager />,
+
+    patches: [
+        {
+            find: "childrenMessageContent:n,onMouseMove:L",
+            replacement: {
+                match: /childrenMessageContent:n,onMouseMove:L/,
+                replace: "childrenMessageContent:$self.renderMessageContent(n,arguments[0].message),onMouseMove:L",
+            },
+        },
+    ],
+
+    renderMessageContent(original: React.ReactNode, message: Message) {
+        markReplaceOriginalPatchActive();
+        return (
+            <ReplaceOriginalContent
+                message={message}
+                original={original}
+            />
+        );
+    },
 
     contextMenus: {
         "channel-context": channelContextPatch,
@@ -1236,12 +879,8 @@ export default definePlugin({
     },
 
     renderMessageAccessory({ message }) {
-        console.log("[AutoTranslateChannels] accessory:", message.id, message.content);
         return (
-            <>
-                <TranslationAccessory message={message} />
-                <EmbedTranslationAccessory message={message} />
-            </>
+            <TranslationAccessory message={message} />
         );
     },
 
@@ -1265,7 +904,6 @@ export default definePlugin({
     },
 
     async start() {
-        console.log("[AutoTranslateChannels] STARTED");
         pluginStartedAt = Date.now();
         await loadChannelIds();
         await loadTranslationCache();
@@ -1273,11 +911,13 @@ export default definePlugin({
 
     stop() {
         originalVisibility.clear();
-        messageListeners.clear();
+        replaceOriginalListeners.clear();
+        replaceOriginalPatchActive = false;
+        for (const messageId of replyOriginalElements.keys()) {
+        }
+        replyOriginalElements.clear();
         messageRevisions.clear();
         cache.clear();
-        embedCache.clear();
-        embedPending.clear();
         pending.clear();
         queue.length = 0;
         activeTranslations = 0;
