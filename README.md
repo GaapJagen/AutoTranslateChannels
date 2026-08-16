@@ -70,6 +70,8 @@ This is an unofficial Vencord UserPlugin.
 
 ### Windows / macOS / Linux
 
+**Installation guide:** [Vencord Custom Plugins](https://docs.vencord.dev/installing/custom-plugins/)
+
 First make sure you have a Vencord source checkout and that you can build Vencord successfully.
 
 Open a terminal in your Vencord directory and run:
