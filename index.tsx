@@ -12,7 +12,6 @@ import { Message } from "@vencord/discord-types";
 import {
     Button,
     ChannelStore,
-    FluxDispatcher,
     GuildStore,
     MessageStore,
     Parser,
@@ -919,9 +918,6 @@ export default definePlugin({
         originalVisibility.clear();
         replaceOriginalListeners.clear();
         replaceOriginalPatchActive = false;
-        for (const messageId of replyOriginalElements.keys()) {
-        }
-        replyOriginalElements.clear();
         messageRevisions.clear();
         cache.clear();
         pending.clear();
