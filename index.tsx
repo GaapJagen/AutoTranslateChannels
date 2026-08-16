@@ -632,6 +632,11 @@ function ReplaceOriginalContent({
 
 const messageRevisions = new Map<string, number>();
 
+function bumpMessageRevision(messageId: string) {
+    messageRevisions.set(messageId, (messageRevisions.get(messageId) ?? 0) + 1);
+}
+
+
 function TranslationAccessory({ message }: { message: Message }) {
     const pluginSettings = settings.use([
         "replaceOriginal",
