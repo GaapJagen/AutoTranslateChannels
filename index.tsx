@@ -840,7 +840,7 @@ export default definePlugin({
     name: "AutoTranslateChannels",
     description: "Automatically translates messages in selected Discord channels.",
     tags: ["Translation", "Chat", "Utility"],
-    authors: [{ name: "Custom", id: 0n }],
+    authors: [{ name: "GaapJagen", id: 298466559033344008n }],
 
     dependencies: ["Translate"],
 
