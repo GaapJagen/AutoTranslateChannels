@@ -109,10 +109,10 @@ Restart Discord after the build completes.
 
 ### Manual installation
 
-You can also download `index.tsx` from this repository and place it directly in:
+You can also download `index.tsx` from this repository and place it in:
 
 ```text
-Vencord/src/userplugins/AutoTranslateChannels.tsx
+Vencord/src/userplugins/AutoTranslateChannels/index.tsx
 ```
 
 Then rebuild Vencord:
@@ -121,7 +121,7 @@ Then rebuild Vencord:
 pnpm build
 ```
 
-Vencord supports custom plugins either as a single `.ts/.tsx` file or as a directory containing an `index.ts`/`index.tsx` file.
+For repository-based installation, keeping `index.tsx` in the plugin directory is recommended because it matches the installation method described above.
 
 ## Configuration
 
@@ -227,7 +227,7 @@ If you use the plugin with private or sensitive conversations, make sure you und
 ## Current limitations
 
 - Reply-preview translation is currently **not supported**.
-- Embed translation is supported, but Discord's embed structure and rendering can vary between messages and Discord client versions.
+- Embed translation is currently disabled.
 - "Translate Only Foreign Text" uses heuristic language detection. Very short, ambiguous text, names, abbreviations and slang may not always be detected correctly.
 - The plugin relies on Vencord and Discord internals. Discord or Vencord updates may break functionality and require an update.
 - Custom Vencord plugins require a Vencord source build.
@@ -244,17 +244,13 @@ Make sure:
 Vencord/src/userplugins/
 ```
 
-2. The file is named:
-
-```text
-AutoTranslateChannels.tsx
-```
-
-or the repository is installed as:
+2. The repository is installed as:
 
 ```text
 Vencord/src/userplugins/AutoTranslateChannels/index.tsx
 ```
+
+or the plugin file is placed directly in `Vencord/src/userplugins/` with a `.ts`/`.tsx` filename.
 
 3. Vencord was rebuilt:
 

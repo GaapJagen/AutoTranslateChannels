@@ -456,7 +456,9 @@ async function doTranslation(
 
     try {
         translateSettings.store.receivedOutput = settings.store.targetLanguage;
+        console.log("[AutoTranslateChannels] Translating:", content);
         const result = await translate("received", content);
+        console.log("[AutoTranslateChannels] Translation result:", result);
         putCache(key, result, content);
         return result;
     } finally {
@@ -537,7 +539,6 @@ function handleMessageUpdate({ message }: { message?: Message }) {
         if (key.startsWith(`embed-result:${message.id}:`) || key.startsWith(`embed-result-v2:${message.id}:`)) embedPending.delete(key);
     }
     originalVisibility.delete(message.id);
-    originalElements.delete(message.id);
 }
 
 function handleMessageDelete({ id, channelId }: { id?: string; channelId?: string }) {
@@ -552,7 +553,6 @@ function handleMessageDelete({ id, channelId }: { id?: string; channelId?: strin
         if (key.startsWith(`embed-result:${id}:`) || key.startsWith(`embed-result-v2:${id}:`)) embedPending.delete(key);
     }
     originalVisibility.delete(id);
-    originalElements.delete(id);
     messageRevisions.delete(id);
 
     if (channelId) {
@@ -573,14 +573,22 @@ function handleMessageDeleteBulk({ ids }: { ids?: string[] }) {
 
 
 const originalVisibility = new Map<string, boolean>();
-const originalElements = new Map<string, HTMLElement>();
+const messageListeners = new Map<string, Set<() => void>>();
 
-type ReplyOriginalState = {
-    element: HTMLElement;
-    html: string;
-};
+function subscribeMessage(messageId: string, listener: () => void) {
+    const listeners = messageListeners.get(messageId) ?? new Set<() => void>();
+    listeners.add(listener);
+    messageListeners.set(messageId, listeners);
 
-const replyOriginalElements = new Map<string, ReplyOriginalState>();
+    return () => {
+        listeners.delete(listener);
+        if (!listeners.size) messageListeners.delete(messageId);
+    };
+}
+
+function notifyMessage(messageId: string) {
+    messageListeners.get(messageId)?.forEach(listener => listener());
+}
 const messageRevisions = new Map<string, number>();
 
 type EmbedTranslation = {
@@ -601,110 +609,11 @@ function bumpMessageRevision(messageId: string): number {
     return revision;
 }
 
-function normalizeText(text: string): string {
-    return text.replace(/\u200b/g, "").replace(/\s+/g, " ").trim();
-}
-
-function stripDiscordMentions(text: string): string {
-    // Discord stores mentions in message.content as tokens such as
-    // <@123>, <@!123>, <@&123> and <#123>, while the rendered markup
-    // contains their human-readable names. This makes a direct
-    // message.content === element.innerText comparison fail.
-    return normalizeText(
-        text
-            .replace(/<@!?\d+>/g, "")
-            .replace(/<@&\d+>/g, "")
-            .replace(/<#\d+>/g, ""),
-    );
-}
-
-function findOriginalMarkup(
-    messageId: string,
-    originalText: string,
-    accessory: HTMLElement | null,
-): HTMLElement | null {
-    const wanted = normalizeText(originalText);
-    if (!wanted) return null;
-
-    const wantedWithoutMentions = stripDiscordMentions(originalText);
-
-    const roots: HTMLElement[] = [];
-
-    const messageRoot =
-        document.querySelector<HTMLElement>(`[data-list-item-id="chat-messages-${messageId}"]`) ??
-        document.querySelector<HTMLElement>(`#chat-messages-${messageId}`);
-
-    if (messageRoot) roots.push(messageRoot);
-
-    let parent = accessory?.parentElement ?? null;
-    for (let i = 0; parent && i < 8; i++, parent = parent.parentElement) {
-        if (!roots.includes(parent)) roots.push(parent);
-    }
-
-    for (const root of roots) {
-        const candidates = Array.from(
-            root.querySelectorAll<HTMLElement>('[class*="markup-"], [class*="markup"]'),
-        ).filter(element => {
-            if (element === accessory || accessory?.contains(element)) return false;
-
-            const ancestorClass = (element.parentElement?.className ?? "").toString();
-            if (/repliedText-|repliedMessage-|embed-|attachment-/.test(ancestorClass)) return false;
-
-            const text = normalizeText(element.innerText || element.textContent || "");
-            return text.length > 0;
-        });
-
-        const exact = candidates.find(
-            element => normalizeText(element.innerText || element.textContent || "") === wanted,
-        );
-        if (exact) return exact;
-
-        const containing = candidates.find(
-            element => normalizeText(element.innerText || element.textContent || "").includes(wanted),
-        );
-        if (containing) return containing;
-
-        // Mentions are the important exception: message.content contains
-        // Discord's raw mention token, but the DOM contains @Username.
-        // Compare again after removing mention tokens from the source.
-        if (wantedWithoutMentions) {
-            const mentionAware = candidates.find(element => {
-                const text = normalizeText(element.innerText || element.textContent || "");
-                return text.includes(wantedWithoutMentions);
-            });
-            if (mentionAware) return mentionAware;
-        }
-    }
-
-    return null;
-}
-
-function setOriginalElement(messageId: string, element: HTMLElement | null) {
-    if (element) originalElements.set(messageId, element);
-    else originalElements.delete(messageId);
-}
-
-function setOriginalVisibility(messageId: string, visible: boolean) {
-    const markup = originalElements.get(messageId);
-    if (!markup) return;
-
-    markup.style.setProperty("display", visible ? "" : "none", "important");
-}
-
 function toggleOriginal(message: Message) {
     const messageId = message.id;
-    let element = originalElements.get(messageId);
-
-    if (!element?.isConnected) {
-        element = findOriginalMarkup(messageId, getContent(message), null);
-        setOriginalElement(messageId, element);
-    }
-
-    if (!element) return;
-
     const visible = !(originalVisibility.get(messageId) ?? false);
     originalVisibility.set(messageId, visible);
-    setOriginalVisibility(messageId, visible);
+    notifyMessage(messageId);
 }
 
 function getEmbedParts(message: Message) {
@@ -954,6 +863,7 @@ function EmbedTranslationAccessory({ message }: { message: Message }) {
                 }
 
                 setResult(value);
+                notifyMessage(message.id);
             })
             .catch(() => {
                 if (!cancelled) setResult(null);
@@ -1042,8 +952,45 @@ function EmbedTranslationAccessory({ message }: { message: Message }) {
     );
 }
 
+function AutoTranslatedContent({
+    message,
+    originalContent,
+}: {
+    message: Message;
+    originalContent: React.ReactNode;
+}) {
+    const [, forceUpdate] = React.useReducer(x => x + 1, 0);
+    const { replaceOriginal } = settings.use(["replaceOriginal"]);
+
+    React.useEffect(() => {
+        const unsubscribeMessage = subscribeMessage(message.id, forceUpdate);
+        const unsubscribeChannels = addListener(forceUpdate);
+
+        return () => {
+            unsubscribeMessage();
+            unsubscribeChannels();
+        };
+    }, [message.id]);
+
+    if (!replaceOriginal || !isEnabled(message.channel_id)) {
+        return <>{originalContent}</>;
+    }
+
+    if (originalVisibility.get(message.id)) {
+        return <>{originalContent}</>;
+    }
+
+    const content = getContent(message);
+    const result = getCachedForMessage(message, content);
+
+    if (!result?.text || result.text.trim() === content) {
+        return <>{originalContent}</>;
+    }
+
+    return <>{Parser.parse(result.text)}</>;
+}
+
 function TranslationAccessory({ message }: { message: Message }) {
-    const accessoryRef = React.useRef<HTMLDivElement>(null);
     const pluginSettings = settings.use([
         "replaceOriginal",
         "showLabel",
@@ -1055,46 +1002,6 @@ function TranslationAccessory({ message }: { message: Message }) {
     const [result, setResult] = React.useState<TranslationValue | null>(
         getCachedForMessage(message, content),
     );
-
-    React.useEffect(() => {
-        if (!pluginSettings.replaceOriginal || !result?.text) {
-            originalVisibility.delete(message.id);
-            setOriginalVisibility(message.id, true);
-            return;
-        }
-
-        let cancelled = false;
-        const timers: number[] = [];
-
-        const apply = () => {
-            if (cancelled) return;
-
-            const original = findOriginalMarkup(
-                message.id,
-                content,
-                accessoryRef.current,
-            );
-
-            if (original) {
-                setOriginalElement(message.id, original);
-                originalVisibility.set(message.id, false);
-                setOriginalVisibility(message.id, false);
-            }
-        };
-
-        apply();
-        for (const delay of [16, 50, 120, 250, 500]) {
-            timers.push(window.setTimeout(apply, delay));
-        }
-
-        return () => {
-            cancelled = true;
-            timers.forEach(window.clearTimeout);
-            setOriginalVisibility(message.id, true);
-            originalElements.delete(message.id);
-            originalVisibility.delete(message.id);
-        };
-    }, [message.id, content, pluginSettings.replaceOriginal, result?.text]);
 
     React.useEffect(() => {
         let cancelled = false;
@@ -1157,9 +1064,14 @@ function TranslationAccessory({ message }: { message: Message }) {
     const original = content;
     if (result.text.trim() === original) return null;
 
+    // When Replace Original is enabled, the Discord message renderer is
+    // patched to render the translation in place of the original content.
+    // Do not render the accessory as well, otherwise the translation would
+    // appear twice.
+    if (pluginSettings.replaceOriginal) return null;
+
     return (
         <div
-            ref={accessoryRef}
             style={{
                 marginTop: pluginSettings.replaceOriginal ? 0 : 4,
                 paddingTop: pluginSettings.replaceOriginal ? 0 : 4,
@@ -1297,6 +1209,18 @@ export default definePlugin({
 
     dependencies: ["Translate"],
 
+    patches: [{
+        find: "hasBailedAst",
+        replacement: {
+            match: /childrenMessageContent:(\i),/,
+            replace: "childrenMessageContent:$self.renderMessageContent(e,$1),",
+        },
+    }],
+
+    renderMessageContent(props: { message: Message }, originalContent: React.ReactNode) {
+        return <AutoTranslatedContent message={props.message} originalContent={originalContent} />;
+    },
+
     settings,
 
     settingsAboutComponent: () => <ChannelManager />,
@@ -1312,6 +1236,7 @@ export default definePlugin({
     },
 
     renderMessageAccessory({ message }) {
+        console.log("[AutoTranslateChannels] accessory:", message.id, message.content);
         return (
             <>
                 <TranslationAccessory message={message} />
@@ -1340,20 +1265,15 @@ export default definePlugin({
     },
 
     async start() {
+        console.log("[AutoTranslateChannels] STARTED");
         pluginStartedAt = Date.now();
         await loadChannelIds();
         await loadTranslationCache();
     },
 
     stop() {
-        for (const messageId of originalVisibility.keys()) {
-            setOriginalVisibility(messageId, true);
-        }
         originalVisibility.clear();
-        originalElements.clear();
-        for (const messageId of replyOriginalElements.keys()) {
-        }
-        replyOriginalElements.clear();
+        messageListeners.clear();
         messageRevisions.clear();
         cache.clear();
         embedCache.clear();
