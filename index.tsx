@@ -1,10 +1,3 @@
-/*
- * AutoTranslateChannels
- * SPDX-License-Identifier: GPL-3.0-or-later
- *
- * A custom Vencord userplugin for translating messages in selected Discord channels.
- */
-
 import * as DataStore from "@api/DataStore";
 import { findGroupChildrenByChildId, NavContextMenuPatchCallback } from "@api/ContextMenu";
 import { definePluginSettings } from "@api/Settings";
@@ -545,7 +538,6 @@ function handleMessageUpdate({ message }: { message?: Message }) {
     }
     originalVisibility.delete(message.id);
     originalElements.delete(message.id);
-    restoreReplyOriginal(message.id);
 }
 
 function handleMessageDelete({ id, channelId }: { id?: string; channelId?: string }) {
@@ -561,7 +553,6 @@ function handleMessageDelete({ id, channelId }: { id?: string; channelId?: strin
     }
     originalVisibility.delete(id);
     originalElements.delete(id);
-    restoreReplyOriginal(id);
     messageRevisions.delete(id);
 
     if (channelId) {
@@ -583,6 +574,13 @@ function handleMessageDeleteBulk({ ids }: { ids?: string[] }) {
 
 const originalVisibility = new Map<string, boolean>();
 const originalElements = new Map<string, HTMLElement>();
+
+type ReplyOriginalState = {
+    element: HTMLElement;
+    html: string;
+};
+
+const replyOriginalElements = new Map<string, ReplyOriginalState>();
 const messageRevisions = new Map<string, number>();
 
 type EmbedTranslation = {
@@ -1353,6 +1351,9 @@ export default definePlugin({
         }
         originalVisibility.clear();
         originalElements.clear();
+        for (const messageId of replyOriginalElements.keys()) {
+        }
+        replyOriginalElements.clear();
         messageRevisions.clear();
         cache.clear();
         embedCache.clear();
