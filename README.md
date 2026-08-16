@@ -19,7 +19,6 @@ AutoTranslateChannels is an unofficial Vencord userplugin that automatically tra
 - Configurable maximum number of simultaneous translation requests
 - "Only New Messages" mode
 - Channel context-menu controls
-- Partial embed translation support
 
 ## Supported languages
 
