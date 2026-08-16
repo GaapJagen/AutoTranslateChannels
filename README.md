@@ -223,6 +223,10 @@ It uses Vencord's existing translation infrastructure and therefore follows the 
 
 If you use the plugin with private or sensitive conversations, make sure you understand which translation provider is being used and what information that provider receives.
 
+### External Translation Services
+
+Translations are performed by the Vencord `Translate` plugin using the translation provider configured by the user (Google Translate, DeepL, or Kagi). Message content sent for translation may be transmitted to the selected external translation provider. Please review the provider's privacy policy before using this plugin with private or sensitive conversations.
+
 ## Current limitations
 
 - Reply-preview translation is currently **not supported**.
